@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>codecast</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%8E%99%3C/text%3E%3C/svg%3E" />
+<style>
+  :root {
+    --bg: #0e1116; --panel: #151a21; --panel-2: #1b2230; --line: #263041;
+    --text: #e6edf3; --muted: #8b98a9; --host: #7ee0c0; --guest: #ffb86c;
+    --add: #1c3326; --add-text: #7ee787; --del: #3a1d22; --del-text: #ff9492;
+    --focus: #2d4b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; gap: 10px; align-items: center; padding: 10px 14px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; letter-spacing: .08em; text-transform: uppercase; color: var(--host); }
+  input[type=text], textarea { background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 6px; padding: 7px 9px; font: inherit; }
+  #url { flex: 1; min-width: 200px; }
+  button { background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 6px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--host); color: var(--host); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.primary { background: var(--host); border-color: var(--host); color: #06231c; font-weight: 600; }
+  .meta { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  a.lab { color: var(--host); text-decoration: none; border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; }
+  a.lab:hover { border-color: var(--host); }
+  main { display: grid; grid-template-columns: 1fr 440px; gap: 0; height: calc(100vh - 53px - 56px); }
+  #diff, #show { overflow: auto; padding: 14px; }
+  #show { border-left: 1px solid var(--line); background: var(--panel); }
+  h2.episode { font-size: 17px; margin: 0 0 6px; }
+  p.summary { color: var(--muted); margin: 0 0 16px; }
+  .file { margin-bottom: 18px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .file > header { background: var(--panel-2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px; padding: 8px 10px; display: flex; gap: 10px; border: 0;
+    justify-content: space-between; align-items: baseline; }
+  .file > header > span:first-child { word-break: break-all; }
+  .file .stat { white-space: nowrap; }
+  .file .stat { color: var(--muted); }
+  .hunk { border-top: 1px solid var(--line); }
+  .hunk.playing { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .hunk .hdr { padding: 4px 10px; color: var(--muted); background: #121722;
+    font-family: ui-monospace, monospace; font-size: 11.5px; display: flex; justify-content: space-between; }
+  .hunk .hdr .anchor { color: var(--focus); }
+  pre.code { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12.5px; line-height: 1.45; overflow-x: auto; }
+  pre.code .ln { display: block; padding: 0 10px 0 0; white-space: pre; }
+  pre.code .ln .no { display: inline-block; width: 46px; text-align: right; margin-right: 10px;
+    color: #4d5a6b; user-select: none; }
+  .ln.add { background: var(--add); color: var(--add-text); }
+  .ln.del { background: var(--del); color: var(--del-text); }
+  .turn { padding: 9px 11px; border-radius: 8px; margin-bottom: 7px; cursor: pointer;
+    border: 1px solid transparent; background: var(--panel-2); }
+  .turn:hover { border-color: var(--line); }
+  .turn.playing { border-color: var(--host); background: #17252a; }
+  .turn .who { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--host); }
+  .turn.guest .who { color: var(--guest); }
+  .turn .ref { float: right; font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
+  .turn.steer { border-left: 3px solid var(--guest); }
+  .brief { margin: 0 0 14px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; background: var(--panel-2); }
+  .brief summary { cursor: pointer; color: var(--host); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
+  .brief .finding { margin-top: 9px; font-size: 12.5px; color: var(--text); }
+  .brief .ev { color: var(--muted); font-family: ui-monospace, monospace; font-size: 11.5px; margin-top: 2px; }
+  .chapter { margin: 16px 0 8px; font-size: 11.5px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+  footer { position: fixed; bottom: 0; left: 0; right: 0; height: 56px; display: flex; align-items: center;
+    gap: 12px; padding: 0 14px; background: var(--panel); border-top: 1px solid var(--line); }
+  #exported a { color: var(--host); }
+  #now { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  #askbox { position: absolute; z-index: 20; background: var(--panel-2); border: 1px solid var(--host);
+    border-radius: 8px; padding: 10px; width: 360px; box-shadow: 0 12px 30px #0008; display: none; }
+  #askbox textarea { width: 100%; height: 62px; resize: vertical; }
+  #askbox .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+  #askbox .row .meta { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .empty { color: var(--muted); padding: 30px 6px; }
+  .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--muted);
+    border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>codecast</h1>
+  <input id="url" type="text" placeholder="https://gitlab.example.com/group/project/-/merge_requests/42" />
+  <button id="go" class="primary">Record episode</button>
+  <span class="meta" id="providers"></span>
+  <a class="meta lab" href="/voices" title="Audition voices and delivery styles">voice lab</a>
+</header>
+
+<main>
+  <section id="diff"><div class="empty">Paste a merge request URL and record an episode. Then highlight any code and ask about it.</div></section>
+  <section id="show"><div class="empty">The transcript shows up here.</div></section>
+</main>
+
+<footer>
+  <button id="play" disabled>▶︎ Play</button>
+  <button id="prev" disabled>⏮</button>
+  <button id="next" disabled>⏭</button>
+  <span id="now">nothing loaded</span>
+  <button id="ask-anything" disabled title="Ask about anything they said (/)">Ask a question</button>
+  <button id="export" disabled title="Render this episode to an mp4 with captions">Export video</button>
+  <span class="meta" id="exported"></span>
+  <label class="meta"><input type="checkbox" id="follow" checked /> follow the diff</label>
+</footer>
+
+<div id="askbox">
+  <div class="meta" id="askref"></div>
+  <textarea id="askinput" placeholder="Push back, or ask them to dig deeper…"></textarea>
+  <div class="row">
+    <span class="meta" id="askstatus"></span>
+    <button id="askcancel">Cancel</button>
+    <button id="asksend" class="primary">Ask</button>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { episode: null, index: -1, playing: false, audio: null, pending: null };
+
+async function api(path, options) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+  return res.json();
+}
+
+/* ---------- rendering ---------------------------------------------------- */
+function renderDiff(ep) {
+  $("diff").innerHTML = ep.files.map((f) => `
+    <div class="file">
+      <header><span>${esc(f.path)}</span>
+        <span class="stat">${f.status} · +${f.added}/-${f.removed}</span></header>
+      ${f.hunks.map((h) => `
+        <div class="hunk" id="hunk-${h.id}" data-hunk="${h.id}">
+          <div class="hdr"><span>${esc(h.header)}</span><span class="anchor">${h.id}</span></div>
+          <pre class="code">${h.lines.map((l) => {
+            const cls = l.kind === "add" ? "add" : l.kind === "del" ? "del" : "ctx";
+            const no = l.new_no || l.old_no || "";
+            return `<span class="ln ${cls}"><span class="no">${no}</span>${esc(l.text) || " "}</span>`;
+          }).join("")}</pre>
+        </div>`).join("")}
+    </div>`).join("");
+}
+
+function renderShow(ep) {
+  let chapter = null;
+  const parts = [`<h2 class="episode">${esc(ep.title)}</h2><p class="summary">${esc(ep.summary)}</p>`];
+  if (ep.brief && ep.brief.length) {
+    parts.push(`<details class="brief"><summary>${ep.brief.length} things they checked in the repo</summary>` +
+      ep.brief.map((f) => `<div class="finding"><b>${esc(f.topic)}</b> ${esc(f.detail)}` +
+        `${(f.evidence || []).length ? `<div class="ev">${esc((f.evidence || []).join(", "))}</div>` : ""}</div>`).join("") +
+      `</details>`);
+  }
+  ep.turns.forEach((t, i) => {
+    if (t.chapter && t.chapter !== chapter) { chapter = t.chapter; parts.push(`<div class="chapter">${esc(chapter)}</div>`); }
+    parts.push(`<div class="turn ${t.speaker} ${t.origin}" data-i="${i}" id="turn-${t.id}">
+      <div class="who">${t.speaker}${t.ref ? `<span class="ref">${t.ref}</span>` : ""}</div>
+      <div>${esc(t.text)}</div></div>`);
+  });
+  if (ep.open_questions && ep.open_questions.length) {
+    parts.push(`<div class="chapter">Left open</div><div class="turn" style="cursor:default">
+      <div>${ep.open_questions.map(esc).join("<br>· ")}</div></div>`);
+  }
+  $("show").innerHTML = parts.join("");
+  $("show").querySelectorAll(".turn[data-i]").forEach((el) =>
+    el.onclick = () => playAt(Number(el.dataset.i)));
+  markCurrent();
+}
+
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function markCurrent() {
+  document.querySelectorAll(".turn.playing").forEach((e) => e.classList.remove("playing"));
+  document.querySelectorAll(".hunk.playing").forEach((e) => e.classList.remove("playing"));
+  const turn = state.episode?.turns[state.index];
+  if (!turn) { $("now").textContent = "nothing loaded"; return; }
+  const el = $("turn-" + turn.id);
+  if (el) { el.classList.add("playing"); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  if (turn.ref && $("follow").checked) {
+    const hunk = $("hunk-" + turn.ref);
+    if (hunk) { hunk.classList.add("playing"); hunk.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  }
+  $("now").textContent = `${turn.speaker}: ${turn.text.slice(0, 120)}`;
+}
+
+/* ---------- playback ----------------------------------------------------- */
+function audioUrl(i) {
+  const t = state.episode.turns[i];
+  return t ? `/api/episodes/${state.episode.id}/audio/${t.id}` : null;
+}
+
+function prefetch(i) {
+  const url = audioUrl(i);
+  if (url) { const a = new Audio(); a.preload = "auto"; a.src = url; state.pending = a; }
+}
+
+function playAt(i) {
+  if (!state.episode || i < 0 || i >= state.episode.turns.length) return stop();
+  state.index = i;
+  if (state.audio) { state.audio.pause(); state.audio.onended = null; }
+  const audio = new Audio(audioUrl(i));
+  state.audio = audio;
+  audio.onended = () => playAt(state.index + 1);
+  audio.onerror = () => { $("now").textContent = "audio failed — check TTS config (codecast doctor)"; setPlaying(false); };
+  audio.play().then(() => { setPlaying(true); prefetch(i + 1); }).catch(() => setPlaying(false));
+  markCurrent();
+}
+
+function setPlaying(on) {
+  state.playing = on;
+  $("play").textContent = on ? "⏸ Pause" : "▶︎ Play";
+}
+
+function stop() { if (state.audio) state.audio.pause(); setPlaying(false); }
+
+function toggle() {
+  if (!state.episode) return;
+  if (!state.audio || state.index < 0) return playAt(0);
+  if (state.audio.paused) { state.audio.play(); setPlaying(true); } else { state.audio.pause(); setPlaying(false); }
+}
+
+/* ---------- episode lifecycle -------------------------------------------- */
+function load(ep) {
+  state.episode = ep;
+  state.index = -1;
+  renderDiff(ep);
+  renderShow(ep);
+  ["play", "prev", "next", "export", "ask-anything"].forEach((id) => ($(id).disabled = false));
+  $("exported").textContent = "";
+  location.hash = ep.id;
+  $("now").textContent = "ready — press play";
+}
+
+async function record() {
+  const url = $("url").value.trim();
+  if (!url) return;
+  $("go").disabled = true;
+  $("go").innerHTML = '<span class="spinner"></span> recording';
+  $("show").innerHTML = '<div class="empty">Fetching the diff and writing the interview…</div>';
+  try {
+    load(await api("/api/episodes", { method: "POST", body: JSON.stringify({ url }) }));
+  } catch (err) {
+    $("show").innerHTML = `<div class="empty">Failed: ${esc(err.message)}</div>`;
+  } finally {
+    $("go").disabled = false;
+    $("go").textContent = "Record episode";
+  }
+}
+
+/* ---------- steering ----------------------------------------------------- */
+let askContext = null;
+
+document.addEventListener("mouseup", (event) => {
+  if ($("askbox").contains(event.target)) return;
+  const selection = window.getSelection();
+  const text = selection ? selection.toString() : "";
+  if (!text.trim() || !state.episode) return hideAsk();
+  const node = selection.anchorNode;
+  const el = node.nodeType === 1 ? node : node.parentElement;
+  const hunkEl = el?.closest?.("[data-hunk]");
+  const turnEl = el?.closest?.(".turn[data-i]");
+  const snippet = text.trim().replace(/\s+/g, " ").slice(0, 56);
+  if (hunkEl) {
+    askContext = { ref: hunkEl.dataset.hunk, selection: text, quote: "" };
+    $("askref").textContent = `about ${askContext.ref} · ${snippet}…`;
+  } else if (turnEl) {
+    const turn = state.episode.turns[Number(turnEl.dataset.i)];
+    askContext = { ref: turn.ref || null, selection: "", quote: text };
+    $("askref").textContent = `about what the ${turn.speaker} said · ${snippet}…`;
+  } else {
+    return hideAsk();
+  }
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  openAsk(rect.left, rect.bottom);
+});
+
+function openAsk(left, top) {
+  const box = $("askbox");
+  box.style.display = "block";
+  box.style.top = `${Math.min(window.scrollY + top + 8, window.innerHeight - 190)}px`;
+  box.style.left = `${Math.max(12, Math.min(left, window.innerWidth - 400))}px`;
+  $("askinput").focus();
+}
+
+/* Ask without selecting anything: about the episode as a whole. */
+function askAnything() {
+  if (!state.episode) return;
+  const turn = state.episode.turns[state.index];
+  askContext = { ref: turn?.ref || null, selection: "", quote: "" };
+  $("askref").textContent = turn
+    ? `about the episode · after the ${turn.speaker}'s line`
+    : "about the episode";
+  const anchor = $("ask-anything").getBoundingClientRect();
+  openAsk(anchor.left, anchor.top - 220);
+}
+
+function hideAsk() { $("askbox").style.display = "none"; $("askstatus").textContent = ""; askContext = null; }
+
+async function sendQuestion() {
+  const question = $("askinput").value.trim();
+  if (!question || !askContext) return;
+  $("asksend").disabled = true;
+  $("askstatus").innerHTML = '<span class="spinner"></span>';
+  try {
+    const body = JSON.stringify({
+      question, ref: askContext.ref, selection: askContext.selection,
+      quote: askContext.quote || "",
+      after_turn: state.episode.turns[state.index]?.id || null,
+    });
+    const res = await api(`/api/episodes/${state.episode.id}/ask`, { method: "POST", body });
+    const at = state.index >= 0 ? state.index + 1 : state.episode.turns.length;
+    state.episode.turns.splice(at, 0, ...res.turns);
+    renderShow(state.episode);
+    $("askinput").value = "";
+    hideAsk();
+    playAt(at);
+  } catch (err) {
+    $("askstatus").textContent = err.message;
+  } finally {
+    $("asksend").disabled = false;
+  }
+}
+
+/* ---------- export ------------------------------------------------------- */
+async function exportVideo() {
+  if (!state.episode) return;
+  stop();
+  $("export").disabled = true;
+  $("export").innerHTML = '<span class="spinner"></span> rendering';
+  $("exported").textContent = "synthesizing any missing lines, then encoding…";
+  try {
+    const res = await api(`/api/episodes/${state.episode.id}/export`, {
+      method: "POST", body: JSON.stringify({ audio_only: false }),
+    });
+    const mb = (res.bytes / 1e6).toFixed(1);
+    const mins = `${Math.floor(res.seconds / 60)}:${String(Math.round(res.seconds % 60)).padStart(2, "0")}`;
+    $("exported").innerHTML =
+      `<a href="${res.download}">download mp4</a> · ${mb} MB · ${mins} · ` +
+      `<a href="${res.subtitles}">subtitles</a>`;
+  } catch (err) {
+    $("exported").textContent = `export failed: ${err.message}`;
+  } finally {
+    $("export").disabled = false;
+    $("export").textContent = "Export video";
+  }
+}
+
+/* ---------- wiring ------------------------------------------------------- */
+$("go").onclick = record;
+$("url").onkeydown = (e) => { if (e.key === "Enter") record(); };
+$("play").onclick = toggle;
+$("export").onclick = exportVideo;
+$("ask-anything").onclick = askAnything;
+$("prev").onclick = () => playAt(Math.max(0, state.index - 1));
+$("next").onclick = () => playAt(state.index + 1);
+$("asksend").onclick = sendQuestion;
+$("askcancel").onclick = hideAsk;
+$("askinput").onkeydown = (e) => {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendQuestion();
+  if (e.key === "Escape") hideAsk();
+};
+document.addEventListener("keydown", (e) => {
+  if (["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
+  if (e.code === "Space") { e.preventDefault(); toggle(); }
+  if (e.key === "/") { e.preventDefault(); askAnything(); }
+  if (e.key === "ArrowRight" || e.key === "j") playAt(state.index + 1);
+  if (e.key === "ArrowLeft" || e.key === "k") playAt(Math.max(0, state.index - 1));
+});
+
+api("/api/config").then((c) => {
+  $("providers").textContent = `${c.llm_provider}:${c.chat_model} · ${c.tts_provider}:${c.tts_model} · ${c.voices.host}/${c.voices.guest}`;
+  if (c.gitlab_host) $("url").placeholder = `https://${c.gitlab_host}/group/project/-/merge_requests/42`;
+}).catch(() => {});
+
+if (location.hash.length > 1) {
+  api(`/api/episodes/${location.hash.slice(1)}`).then(load).catch(() => {});
+}
+</script>
+</body>
+</html>

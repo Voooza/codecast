@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>codecast · voice lab</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%8E%9B%3C/text%3E%3C/svg%3E" />
+<style>
+  :root { --bg:#0e1116; --panel:#151a21; --panel-2:#1b2230; --line:#263041;
+          --text:#e6edf3; --muted:#8b98a9; --host:#7ee0c0; --guest:#ffb86c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); padding:22px 26px 60px;
+         font:14px/1.55 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  h1 { font-size:15px; letter-spacing:.08em; text-transform:uppercase; color:var(--host); margin:0 0 4px; }
+  .badge-provider { color:var(--muted); font-family:ui-monospace, Menlo, monospace; text-transform:none; letter-spacing:0; }
+  p.lead { color:var(--muted); margin:0 0 20px; max-width:70ch; }
+  a { color: var(--host); }
+  label { display:block; font-size:11.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--muted); margin:0 0 5px; }
+  textarea { width:100%; background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+             border-radius:6px; padding:9px; font:inherit; resize:vertical; }
+  .fields { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:18px; }
+  .fields > div:last-child { grid-column:1/-1; }
+  button { background:var(--panel-2); border:1px solid var(--line); color:var(--text);
+           border-radius:6px; padding:7px 12px; font:inherit; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--host); color:var(--host); }
+  button:disabled { opacity:.55; cursor:default; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(240px,100%),1fr)); gap:10px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:11px 12px; cursor:pointer; }
+  .card { min-width:0; }
+  .card .name { word-break:break-word; }
+  .card .head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .card .sub { color:var(--muted); font-size:11.5px; margin-top:3px; }
+  .chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+  .chip { font-size:11px; padding:2px 7px; border:1px solid var(--line); border-radius:99px; color:var(--muted); }
+  .chip:hover { border-color:var(--guest); color:var(--guest); }
+  .assign { display:flex; gap:6px; margin-top:9px; }
+  .assign button { font-size:11.5px; padding:4px 8px; flex:1; }
+  .card .head button.play { padding:4px 10px; }
+  .card.playing { border-color:var(--host); }
+  .card .name { font-family:ui-monospace, Menlo, monospace; }
+  .card .badge { font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--guest); }
+  .bar { display:flex; gap:10px; align-items:center; margin:18px 0 14px; flex-wrap:wrap; }
+  .hint { color:var(--muted); font-size:12.5px; }
+  code { background:var(--panel-2); padding:1px 5px; border-radius:4px; font-size:12.5px; }
+</style>
+</head>
+<body>
+<h1>voice lab <span id="provider" class="badge-provider"></span></h1>
+<p class="lead">Audition a voice with the exact delivery direction the episode will use, on whichever
+provider <code>TTS_PROVIDER</code> points at. Click a voice to hear it, or click one of its style
+chips to hear that style. <strong>Cast as host / guest</strong> saves that voice together with the
+direction box next to it, and the studio uses it from the next line it renders — no restart. Azure Speech directions are directives
+(<code>style=excited;degree=1.7;rate=+10%;pitch=+2st</code>); OpenAI ones are plain prose. The casting lives in <code>.codecast/cast.json</code>; <strong>reset to .env</strong>
+throws it away. <a href="/">back to the studio</a></p>
+
+<div class="fields">
+  <div>
+    <label for="style">Delivery direction (guest)</label>
+    <textarea id="style" rows="5"></textarea>
+  </div>
+  <div>
+    <label for="hoststyle">Delivery direction (host)</label>
+    <textarea id="hoststyle" rows="5"></textarea>
+  </div>
+  <div>
+    <label for="line">Line to read</label>
+    <textarea id="line" rows="3"></textarea>
+  </div>
+</div>
+
+<div class="bar">
+  <button id="useguest" class="on">use guest direction</button>
+  <button id="usehost">use host direction</button>
+  <button id="reset" title="Forget the lab's casting and use .env again">reset to .env</button>
+  <span class="hint" id="status"></span>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let current = null, which = "guest", data = null;
+
+function setWhich(w) {
+  which = w;
+  $("useguest").style.borderColor = w === "guest" ? "var(--host)" : "var(--line)";
+  $("usehost").style.borderColor = w === "host" ? "var(--host)" : "var(--line)";
+}
+
+function styleText() { return (which === "host" ? $("hoststyle") : $("style")).value; }
+
+function applyCast(voices) {
+  data.current = voices;
+  document.querySelectorAll("[data-badge]").forEach((badge) => {
+    const name = badge.dataset.badge;
+    badge.textContent = name === voices.guest ? "guest" : name === voices.host ? "host" : "";
+  });
+}
+
+async function play(voice, card) {
+  if (current) { current.pause(); current = null; }
+  document.querySelectorAll(".card.playing").forEach((c) => c.classList.remove("playing"));
+  card.classList.add("playing");
+  $("status").textContent = `rendering ${voice}…`;
+  const res = await fetch("/api/preview", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voice, style: styleText(), text: $("line").value }),
+  });
+  if (!res.ok) {
+    $("status").textContent = (await res.json().catch(() => ({}))).detail || res.statusText;
+    card.classList.remove("playing");
+    return;
+  }
+  const audio = new Audio(URL.createObjectURL(await res.blob()));
+  current = audio;
+  audio.onended = () => card.classList.remove("playing");
+  audio.play();
+  $("status").textContent = `${voice} · ${which} direction`;
+}
+
+fetch("/api/voices").then((r) => r.json()).then((d) => {
+  data = d;
+  $("provider").textContent = `· ${d.provider}:${d.model}`;
+  $("style").value = d.styles.guest;
+  $("hoststyle").value = d.styles.host;
+  $("line").value = d.sample;
+  $("grid").innerHTML = d.voices.map((v) => {
+    const role = v.name === d.current.guest ? "guest" : v.name === d.current.host ? "host" : "";
+    const chips = (v.styles || []).map((st) =>
+      `<span class="chip" data-voice="${v.name}" data-style="${st}">${st}</span>`).join("");
+    return `<div class="card" data-voice="${v.name}">
+      <div class="head"><span class="name">${v.name}</span>
+        <span class="badge" data-badge="${v.name}">${role}</span><button class="play">▶︎</button></div>
+      ${v.gender ? `<div class="sub">${v.gender.toLowerCase()} · ${v.locale}</div>` : ""}
+      ${chips ? `<div class="chips">${chips}</div>` : ""}
+      <div class="assign">
+        <button class="cast" data-role="host" data-voice="${v.name}">cast as host</button>
+        <button class="cast" data-role="guest" data-voice="${v.name}">cast as guest</button>
+      </div></div>`;
+  }).join("");
+  $("grid").querySelectorAll(".chip").forEach((chip) => chip.onclick = (e) => {
+    e.stopPropagation();
+    const box = which === "host" ? $("hoststyle") : $("style");
+    box.value = box.value.match(/style=[^;]*/)
+      ? box.value.replace(/style=[^;]*/, `style=${chip.dataset.style}`)
+      : `style=${chip.dataset.style};degree=1.6;rate=+8%`;
+    play(chip.dataset.voice, chip.closest(".card"));
+  });
+  $("grid").querySelectorAll(".card").forEach((card) =>
+    card.onclick = () => play(card.dataset.voice, card));
+  $("grid").querySelectorAll("button.cast").forEach((btn) => btn.onclick = async (e) => {
+    e.stopPropagation();
+    const role = btn.dataset.role;
+    const style = (role === "host" ? $("hoststyle") : $("style")).value;
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/cast", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role, voice: btn.dataset.voice, style }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+      applyCast((await res.json()).voices);
+      $("status").textContent = `${btn.dataset.voice} is now the ${role} — active in the studio immediately`;
+    } catch (err) {
+      $("status").textContent = err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  setWhich("guest");
+});
+
+$("reset").onclick = async () => {
+  const res = await fetch("/api/cast", { method: "DELETE" });
+  applyCast((await res.json()).voices);
+  $("status").textContent = "back to the voices in .env";
+};
+$("useguest").onclick = () => setWhich("guest");
+$("usehost").onclick = () => setWhich("host");
+</script>
+</body>
+</html>
