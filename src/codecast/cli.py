@@ -11,7 +11,8 @@ import typer
 import uvicorn
 
 from . import diff as diffmod
-from . import forge, pipeline, providers, script, session, video
+from . import forge, pipeline, providers, session, video
+from . import transcript as transcriptmod
 from .config import ConfigError, settings
 
 app = typer.Typer(add_completion=False, help="Steerable podcast reviews of GitLab merge requests.")
@@ -84,19 +85,18 @@ def episode(
     if as_json:
         typer.echo(json.dumps(ep.to_dict(), indent=2))
         return
-    typer.echo(f"# {ep.title}\n\n{ep.summary}\n")
-    chapter = None
-    for turn in ep.turns:
-        if turn["chapter"] != chapter:
-            chapter = turn["chapter"]
-            typer.echo(f"\n## {chapter}\n")
-        ref = f" [{turn['ref']}]" if turn["ref"] else ""
-        typer.echo(f"{turn['speaker'].upper()}{ref}: {turn['text']}\n")
+    typer.echo(transcriptmod.markdown(ep), nl=False)
     typer.echo(f"\n(episode id: {ep.id})")
 
 
-if __name__ == "__main__":
-    app()
+@app.command()
+def transcript(episode_id: str) -> None:
+    """Print a recorded episode as markdown - pipe it to clip.exe, pbcopy or xclip."""
+    ep = session.load(episode_id)
+    if ep is None:
+        raise typer.BadParameter(f"unknown episode {episode_id!r}")
+    typer.echo(transcriptmod.markdown(ep), nl=False)
+
 
 
 @app.command()
@@ -185,3 +185,7 @@ def cost(days: int = typer.Option(1, help="How many days back to total.")) -> No
     typer.echo(f"  {'estimated spend':24} {'':>12}   ${total:>7.3f}")
     typer.echo("\nHD voices (names with ':MAI-' or 'HD') meter at $22/1M instead of $15/1M.")
     typer.echo(f"Authoritative billing: Cost analysis on the {group or 'resource'} resource group.")
+
+
+if __name__ == "__main__":
+    app()

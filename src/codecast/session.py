@@ -6,7 +6,7 @@ import hashlib
 import json
 import threading
 import uuid
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from typing import Any
 
 from . import diff as diffmod
@@ -31,6 +31,7 @@ class Episode:
     open_questions: list[str] = field(default_factory=list)
     brief: list[dict[str, Any]] = field(default_factory=list)
     research_trace: list[str] = field(default_factory=list)
+    lint: list[str] = field(default_factory=list)
     counter: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -38,7 +39,8 @@ class Episode:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Episode":
-        return cls(**data)
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
     # -- turns ---------------------------------------------------------------
     def next_turn_id(self, prefix: str = "t") -> str:
@@ -58,6 +60,9 @@ class Episode:
                 "speaker": "guest" if str(t.get("speaker", "")).lower() == "guest" else "host",
                 "text": str(t.get("text", "")).strip(),
                 "ref": t.get("ref") or None,
+                "claim": t.get("claim") or None,
+                "cite": list(t.get("cite") or []),
+                "flags": list(t.get("flags") or []),
                 "chapter": "Your question",
                 "origin": "steer",
             }
@@ -157,6 +162,7 @@ def create(
         open_questions=list(script.get("open_questions") or []),
         brief=list((brief or {}).get("findings") or []),
         research_trace=list(trace or []),
+        lint=list(script.get("lint") or []),
     )
     for chapter in script.get("chapters") or []:
         for turn in chapter.get("turns") or []:
@@ -169,6 +175,9 @@ def create(
                     "speaker": "guest" if str(turn.get("speaker", "")).lower() == "guest" else "host",
                     "text": text,
                     "ref": turn.get("ref") or chapter.get("ref") or None,
+                    "claim": turn.get("claim") or None,
+                    "cite": list(turn.get("cite") or []),
+                    "flags": list(turn.get("flags") or []),
                     "chapter": chapter.get("title") or "",
                     "origin": "script",
                 }

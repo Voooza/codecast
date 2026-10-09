@@ -4,10 +4,14 @@ Turn a GitLab merge request or GitHub pull request into a podcast you can
 interrupt.
 
 Paste a review URL. codecast pulls the diff, writes an interview about it — a host
-who asks the questions a reviewer asks, a guest who owns the change and explains
-the intricacies — and reads it out in two voices while scrolling the diff to
-whatever they are discussing. Highlight any lines, type a question, and the pair
-picks up your question mid-episode and keeps going.
+who asks the questions a reviewer asks, a reviewer who has read the diff and the
+code around it and explains the intricacies — and reads it out in two voices
+while scrolling the diff to whatever they are discussing. Highlight any lines,
+type a question, and the pair picks up your question mid-episode and keeps going.
+
+Neither speaker is the author of the change, and every turn says whether its
+facts are cited or merely asserted — see [Who is talking, and what they may
+claim](#who-is-talking-and-what-they-may-claim).
 
 ## Quick start
 
@@ -43,6 +47,53 @@ up automatically if you have one, so that limit rarely bites. GitHub omits the
 patch for binary and very large files; those files are dropped from the episode
 rather than appearing empty.
 
+## Who is talking, and what they may claim
+
+An episode is a synthetic transcript about a real person's change, and it is
+built so that it can be read by that person's colleagues without misleading
+them.
+
+**Nobody speaks as the author.** The two voices are a *host* and a *reviewer*;
+the author is discussed in the third person and is never quoted. Without this,
+the pleasant fiction of a guest who owns the change produces lines like *"I
+chose an ordinary composite index"* and *"that was expedient, not ideal"* — a
+confession attributed to a named colleague who never said it. The transcript is
+labelled as synthetic in the studio, in `codecast episode`, on every exported
+frame and in the `.srt`. (`guest` survives as the role name in the schema, the
+voice config and the CSS; only the persona and the labels changed.)
+
+**Every turn declares its footing.** `claim` is one of:
+
+| claim | means | shown as |
+| --- | --- | --- |
+| `verified` | the fact is in the diff or the research brief, and `cite` gives `file:line` | ✓ with the citation |
+| `asserted` | the reviewer's reading, suspicion or question — and phrased that way out loud | `unverified` |
+| `none` | the turn states no fact: opener, reaction, wrap-up | nothing |
+
+The split is not left to the model's good intentions. `script.vet()` resolves
+every citation against the paths the diff touches plus the paths the brief cites,
+and any `verified` turn it cannot trace is **downgraded to `asserted`** with a
+line in `episode.lint`. So a checkmark in the transcript always means a file and
+line you can open; "the booked-routing table already has an index by booking ID"
+earns one, "I ran 1,214 data-provisioning tests" cannot.
+
+Resolution is at file granularity, and deliberately so: a citation has to name a
+file the diff touches or the brief read, and the line number is the reader's
+entry point rather than something codecast can confirm — the brief legitimately
+cites lines nowhere near a hunk. A ✓ therefore means *this came from a file that
+was actually read*, not *this line says exactly that*.
+
+Two heuristics flag what a claim level cannot express, as a badge on the turn and
+an entry in `episode.lint`:
+
+- `author-voice` — the reviewer slipped into speaking as the author (*"I chose"*,
+  *"my change"*, *"it was an omission"*).
+- `claims-a-run` — the turn reports a test run, benchmark or deploy. Nothing in
+  this pipeline executes anything, so such a line is fabricated by construction.
+
+Both are deliberately loud: a false positive costs a reader one glance at a
+flagged line; a miss puts an invented admission in someone's merge request.
+
 ## Grounding in the repository
 
 The diff cannot answer "what enforces this invariant?", "who calls this?" or
@@ -58,7 +109,11 @@ GitHub token; nothing prompts, and tokens are scrubbed from any error text.
 
 `research.py` then runs a bounded tool-use loop — `grep`, `read_file`,
 `list_dir`, confined to the checkout — and returns a brief where every finding
-carries `file:line` evidence. That brief goes into the episode prompt, so the
+carries `file:line` evidence (required by the schema, not merely encouraged).
+The loop is pushed at the files the diff *only references* — the callee, the
+interface, the entity behind the query, the migration, the test that should have
+moved with it — because that is where the misses live, and because a `verified`
+turn can only cite a file that either the diff or the brief covers. That brief goes into the episode prompt, so the
 guest can talk about code beyond the diff, and it is stored on the episode
 (`brief`, plus the tool `research_trace`). The studio shows it as *"N things
 they checked in the repo"* above the transcript.
@@ -163,13 +218,36 @@ changes underneath it. **reset to .env** deletes it.
 Whichever way you ask, the answer is spliced in right after the line that is
 playing and picks up immediately, so the episode carries on rather than
 branching. Quoting a line of dialog is the interesting one: the pair is told to
-engage with the objection and either defend the claim with specifics or concede
-and correct it.
+engage with the objection and either back the claim with a citation or concede
+and correct it — it is not the reviewer's change, so there is nothing to defend.
+Steered turns go through the same vetting as the script, and a downgrade shows up
+in the same `lint` disclosure above the transcript.
 
 Clicking any line of the transcript plays from there. The URL hash holds the
 episode id, so a reload resumes the same episode.
 
 ## Export
+
+**Copy transcript** in the footer puts the episode on the clipboard as markdown:
+the synthetic-transcript label, the chapter headings, one line per turn with its
+hunk anchor, `✓ file:line` under every verified claim and an *unverified* marker
+under the rest. `codecast transcript <episode-id>` prints the same text for a
+recorded episode, so it pipes:
+
+```bash
+uv run codecast transcript pallets-flask-5918-49ad92 | clip.exe   # or pbcopy, xclip
+curl -s localhost:8077/api/episodes/<id>/transcript.md            # same renderer
+```
+
+There is one renderer (`transcript.py`) behind the button, the command and the
+endpoint, so a transcript cannot reach someone's review thread without the label
+and the citations that belong to it — see [Who is talking, and what they may
+claim](#who-is-talking-and-what-they-may-claim).
+
+The button copies through `navigator.clipboard` where the browser allows it and
+falls back to a hidden textarea plus `execCommand` where it does not: the studio
+is usually opened from the Windows host over the WSL IP, and that is not a secure
+context, so the modern API is simply absent there.
 
 `Export video` in the footer (or `uv run codecast export <episode-id>`) renders
 the episode to a 1080p mp4: the hunk under discussion on screen, the line being
@@ -221,7 +299,8 @@ budget alert there.
 
 ```bash
 uv run codecast fetch <mr-url>      # what changed, as hunk anchors
-uv run codecast episode <mr-url>    # print the transcript (add --json)
+uv run codecast episode <mr-url>    # record and print as markdown (add --json)
+uv run codecast transcript <id>     # print a recorded episode as markdown
 uv run codecast serve --reload
 uv run codecast doctor --probe
 uv run codecast export <episode-id> [--audio-only]
@@ -237,11 +316,15 @@ diff.py     unified diff -> files/hunks with anchors (f2h1) shared by
 repo.py     shallow checkout of the review head, per project
 research.py bounded grep/read/list loop -> brief with file:line evidence
 pipeline.py fetch -> ground -> script, shared by the API and the CLI
-script.py   personas + diff + brief -> chapters of host/guest turns, and
+script.py   personas + diff + brief -> chapters of host/reviewer turns,
+            vet() to downgrade claims no citation supports, and
             answer() for a mid-episode listener question
 session.py  episode as a flat turn list, persisted under .codecast/,
             mp3 cache keyed by voice + text
-api.py      POST /api/episodes, GET .../audio/{turn}, POST .../ask
+transcript.py  episode -> markdown, shared by the copy button, the CLI
+            and /transcript.md
+api.py      POST /api/episodes, GET .../audio/{turn}, POST .../ask,
+            GET .../transcript.md
 web/        one-file studio: diff pane, transcript, player, ask box
 ```
 
@@ -253,7 +336,9 @@ first line instead of after the whole episode.
 - Jira / Confluence context (the `extra_context` field on `POST /api/episodes`
   already feeds the prompt; nothing fills it)
 - Bitbucket / Azure DevOps (one more module beside `github.py`)
-- review report export
-- posting the conclusions back as MR comments
+- a review *report*: the markdown transcript exports the conversation, not a
+  curated findings list (the `verified` turns and the brief are the raw material)
+- posting the conclusions back as MR comments — whatever posts must carry the
+  synthetic label and the citations with it
 - an episode list in the UI (`.codecast/episodes/` is the only index today)
 - picking up existing MR discussions so the pair can react to review threads

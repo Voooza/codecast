@@ -75,9 +75,13 @@ BRIEF_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "topic": {"type": "string"},
                     "detail": {"type": "string"},
-                    "evidence": {"type": "array", "items": {"type": "string"}},
+                    "evidence": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "file:line for each fact in detail, e.g. 'src/db/Booking.java:88'.",
+                    },
                 },
-                "required": ["topic", "detail"],
+                "required": ["topic", "detail", "evidence"],
             },
         },
         "open_questions": {"type": "array", "items": {"type": "string"}},
@@ -205,8 +209,10 @@ def investigate(
         {
             "role": "user",
             "content": (
-                "Now write the brief as JSON. Only include findings you verified in the files you "
-                "read, each with file:line evidence. Leave findings empty rather than guessing."
+                "Now write the brief as JSON. Only include findings you verified in the files "
+                "you actually read, each with file:line evidence a reader can open and check. "
+                "Anything you inferred but did not read belongs in open_questions. Leave "
+                "findings empty rather than guessing."
             ),
         }
     )
@@ -236,6 +242,17 @@ Answer the questions the diff raises but cannot settle:
 - prior art: how the codebase already solves this elsewhere
 - anything that makes the change riskier or safer than it looks
 
+Go where the diff only points. Open the files it names but does not show: the
+function it calls, the interface it implements, the entity or schema behind the
+query, the migration, the config, the test that should have moved with it. A
+finding about a file the diff already contains is worth little; a finding about
+a file it merely references is the whole point of you being here.
+
+Every finding must be checkable by someone who opens the file you cite, so give
+file:line for each fact and quote nothing you did not read. Numbers - test
+counts, timeouts, limits - only if you read them in a file. What you could not
+settle goes in open_questions, named as what to check, not guessed at.
+
 Be efficient: grep first to locate, then read only the relevant slice. Do not
 re-read the diff - you already have it. Stop as soon as you can support your
 findings with file:line evidence.
@@ -261,6 +278,17 @@ If the repository does not settle it, say so and name what you checked.
 def lookup(repo: Path, context: str, question: str, *, max_steps: int = 6) -> tuple[dict[str, Any], list[str]]:
     task = f"{context}\n\nThe listener asks: {question}\n\nCheck the repository, then report."
     return investigate(repo, LOOKUP_SYSTEM, task, max_steps=max_steps)
+
+
+def evidence_paths(brief: dict[str, Any]) -> set[str]:
+    """Every file the brief cites - the extra paths a turn is allowed to claim."""
+    paths: set[str] = set()
+    for finding in brief.get("findings") or []:
+        for item in finding.get("evidence") or []:
+            head = str(item).strip().split(":", 1)[0].strip().split(" line", 1)[0].strip()
+            if head:
+                paths.add(head)
+    return paths
 
 
 def render(brief: dict[str, Any]) -> str:

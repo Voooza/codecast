@@ -54,6 +54,8 @@
     color: #4d5a6b; user-select: none; }
   .ln.add { background: var(--add); color: var(--add-text); }
   .ln.del { background: var(--del); color: var(--del-text); }
+  .ln.cited { box-shadow: inset 3px 0 0 var(--focus); }
+  .ln.cited .no { color: var(--focus); }
   .turn { padding: 9px 11px; border-radius: 8px; margin-bottom: 7px; cursor: pointer;
     border: 1px solid transparent; background: var(--panel-2); }
   .turn:hover { border-color: var(--line); }
@@ -62,6 +64,14 @@
   .turn.guest .who { color: var(--guest); }
   .turn .ref { float: right; font-size: 11px; color: var(--muted); font-family: ui-monospace, monospace; }
   .turn.steer { border-left: 3px solid var(--guest); }
+  .synthetic { margin: 0 0 12px; border: 1px solid var(--line); border-left: 3px solid var(--guest);
+    border-radius: 8px; padding: 7px 10px; background: var(--panel-2); color: var(--muted); font-size: 12px; }
+  .turn .badge { float: right; font-size: 10.5px; letter-spacing: .04em;
+    font-family: ui-monospace, monospace; border-radius: 4px; padding: 1px 5px; margin-left: 8px; }
+  .turn .badge.ok { color: var(--add-text); background: var(--add); }
+  .turn .badge.un { color: var(--muted); border: 1px solid var(--line); }
+  .turn .badge.warn { color: var(--del-text); background: var(--del); }
+  .turn .cites { margin-top: 4px; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
   .brief { margin: 0 0 14px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px; background: var(--panel-2); }
   .brief summary { cursor: pointer; color: var(--host); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; }
   .brief .finding { margin-top: 9px; font-size: 12.5px; color: var(--text); }
@@ -102,6 +112,7 @@
   <button id="next" disabled>⏭</button>
   <span id="now">nothing loaded</span>
   <button id="ask-anything" disabled title="Ask about anything they said (/)">Ask a question</button>
+  <button id="copy" disabled title="Copy the transcript as markdown, label and citations included">Copy transcript</button>
   <button id="export" disabled title="Render this episode to an mp4 with captions">Export video</button>
   <span class="meta" id="exported"></span>
   <label class="meta"><input type="checkbox" id="follow" checked /> follow the diff</label>
@@ -119,7 +130,14 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { episode: null, index: -1, playing: false, audio: null, pending: null };
+// The guest is a reviewer, not the author - the label has to say so out loud.
+const WHO = { host: "host", guest: "reviewer" };
+const who = (s) => WHO[s] || s;
+const FLAG = {
+  "author-voice": "Reads as the author speaking - they did not say this",
+  "claims-a-run": "Reports a test run, deploy or benchmark - nothing was executed",
+};
+const state = { episode: null, index: -1, playing: false, audio: null, pending: null, followed: null };
 
 async function api(path, options) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...options });
@@ -129,8 +147,8 @@ async function api(path, options) {
 
 /* ---------- rendering ---------------------------------------------------- */
 function renderDiff(ep) {
-  $("diff").innerHTML = ep.files.map((f) => `
-    <div class="file">
+  $("diff").innerHTML = ep.files.map((f, fi) => `
+    <div class="file" data-file="${fi}">
       <header><span>${esc(f.path)}</span>
         <span class="stat">${f.status} · +${f.added}/-${f.removed}</span></header>
       ${f.hunks.map((h) => `
@@ -139,7 +157,8 @@ function renderDiff(ep) {
           <pre class="code">${h.lines.map((l) => {
             const cls = l.kind === "add" ? "add" : l.kind === "del" ? "del" : "ctx";
             const no = l.new_no || l.old_no || "";
-            return `<span class="ln ${cls}"><span class="no">${no}</span>${esc(l.text) || " "}</span>`;
+            const at = l.new_no ? ` data-new="${l.new_no}"` : "";
+            return `<span class="ln ${cls}"${at}><span class="no">${no}</span>${esc(l.text) || " "}</span>`;
           }).join("")}</pre>
         </div>`).join("")}
     </div>`).join("");
@@ -148,6 +167,14 @@ function renderDiff(ep) {
 function renderShow(ep) {
   let chapter = null;
   const parts = [`<h2 class="episode">${esc(ep.title)}</h2><p class="summary">${esc(ep.summary)}</p>`];
+  parts.push(`<div class="synthetic">Synthetic transcript. Two generated voices discuss
+    <b>${esc(ep.mr.author || "the author")}</b>'s change; neither of them is
+    ${esc(ep.mr.author || "the author")}, and nothing here was said by anyone.
+    ✓ marks a claim traced to a cited line — everything else is the reviewer's reading.</div>`);
+  if (ep.lint && ep.lint.length) {
+    parts.push(`<details class="brief"><summary>${ep.lint.length} line(s) the checker corrected</summary>` +
+      ep.lint.map((l) => `<div class="finding">${esc(l)}</div>`).join("") + `</details>`);
+  }
   if (ep.brief && ep.brief.length) {
     parts.push(`<details class="brief"><summary>${ep.brief.length} things they checked in the repo</summary>` +
       ep.brief.map((f) => `<div class="finding"><b>${esc(f.topic)}</b> ${esc(f.detail)}` +
@@ -156,9 +183,16 @@ function renderShow(ep) {
   }
   ep.turns.forEach((t, i) => {
     if (t.chapter && t.chapter !== chapter) { chapter = t.chapter; parts.push(`<div class="chapter">${esc(chapter)}</div>`); }
+    const cites = t.cite || [];
+    const badge = t.claim === "verified"
+      ? `<span class="badge ok" title="Traced to ${esc(cites.join(", "))}">✓ verified</span>`
+      : t.claim === "asserted" ? `<span class="badge un" title="The reviewer's reading, not a cited fact">unverified</span>` : "";
+    const flag = (t.flags || []).map((f) =>
+      `<span class="badge warn" title="${esc(FLAG[f] || f)}">${esc(f.replace(/-/g, " "))}</span>`).join("");
     parts.push(`<div class="turn ${t.speaker} ${t.origin}" data-i="${i}" id="turn-${t.id}">
-      <div class="who">${t.speaker}${t.ref ? `<span class="ref">${t.ref}</span>` : ""}</div>
-      <div>${esc(t.text)}</div></div>`);
+      <div class="who">${who(t.speaker)}${t.ref ? `<span class="ref">${t.ref}</span>` : ""}${badge}${flag}</div>
+      <div>${esc(t.text)}</div>
+      ${t.claim === "verified" && cites.length ? `<div class="cites">${esc(cites.join("  ·  "))}</div>` : ""}</div>`);
   });
   if (ep.open_questions && ep.open_questions.length) {
     parts.push(`<div class="chapter">Left open</div><div class="turn" style="cursor:default">
@@ -176,15 +210,65 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
 function markCurrent() {
   document.querySelectorAll(".turn.playing").forEach((e) => e.classList.remove("playing"));
   document.querySelectorAll(".hunk.playing").forEach((e) => e.classList.remove("playing"));
+  document.querySelectorAll(".ln.cited").forEach((e) => e.classList.remove("cited"));
   const turn = state.episode?.turns[state.index];
   if (!turn) { $("now").textContent = "nothing loaded"; return; }
   const el = $("turn-" + turn.id);
   if (el) { el.classList.add("playing"); el.scrollIntoView({ block: "center", behavior: "smooth" }); }
-  if (turn.ref && $("follow").checked) {
-    const hunk = $("hunk-" + turn.ref);
-    if (hunk) { hunk.classList.add("playing"); hunk.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  if ($("follow").checked) follow(turn);
+  $("now").textContent = `${who(turn.speaker)}: ${turn.text.slice(0, 120)}`;
+}
+
+/* ---------- following the diff ------------------------------------------ */
+// A ref names a whole hunk, and a new file is one hunk of a hundred-plus lines,
+// so centring the hunk shows its middle, not what they are talking about. The
+// cites ("path:42" or "path:42-57") name the lines; follow those when they are
+// in the diff, preferring ones inside the ref'd hunk.
+function citedLines(turn) {
+  const files = state.episode.files;
+  const hits = [];
+  for (const cite of turn.cite || []) {
+    const m = /^(.*):(\d+)(?:-(\d+))?$/.exec(String(cite).trim());
+    if (!m) continue;
+    const path = m[1].trim(), from = Number(m[2]), to = Number(m[3] || m[2]);
+    const fi = files.findIndex((f) => f.path === path || f.path.endsWith("/" + path) || path.endsWith("/" + f.path));
+    if (fi < 0) continue;
+    document.querySelectorAll(`.file[data-file="${fi}"] .ln[data-new]`).forEach((ln) => {
+      const no = Number(ln.dataset.new);
+      if (no >= from && no <= to) hits.push(ln);
+    });
   }
-  $("now").textContent = `${turn.speaker}: ${turn.text.slice(0, 120)}`;
+  const own = hits.filter((ln) => ln.closest("[data-hunk]")?.dataset.hunk === turn.ref);
+  return own.length ? own : hits;
+}
+
+// Scroll only the diff pane; scrollIntoView would also nudge every scrollable ancestor.
+function scrollDiff(first, last) {
+  const pane = $("diff");
+  const base = pane.getBoundingClientRect().top - pane.scrollTop;
+  const top = first.getBoundingClientRect().top - base;
+  const bottom = last.getBoundingClientRect().bottom - base;
+  const span = bottom - top;
+  // Centre a span that fits; otherwise put its start near the top, with a little context above.
+  const target = span < pane.clientHeight - 40 ? top - (pane.clientHeight - span) / 2 : top - 40;
+  pane.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+}
+
+function follow(turn) {
+  const hunk = turn.ref ? $("hunk-" + turn.ref) : null;
+  if (hunk) hunk.classList.add("playing");
+  const lines = citedLines(turn);
+  if (lines.length) {
+    lines.forEach((ln) => ln.classList.add("cited"));
+    const inPane = lines.filter((ln) => ln.closest("[data-hunk]") === lines[0].closest("[data-hunk]"));
+    state.followed = turn.ref;
+    return scrollDiff(inPane[0], inPane[inPane.length - 1]);
+  }
+  // No line to go to (a question, an unverified turn): stay put while the thread
+  // is still on this hunk, so the answer's lines are not yanked away.
+  if (!hunk || state.followed === turn.ref) return;
+  state.followed = turn.ref;
+  scrollDiff(hunk, hunk);
 }
 
 /* ---------- playback ----------------------------------------------------- */
@@ -227,9 +311,10 @@ function toggle() {
 function load(ep) {
   state.episode = ep;
   state.index = -1;
+  state.followed = null;
   renderDiff(ep);
   renderShow(ep);
-  ["play", "prev", "next", "export", "ask-anything"].forEach((id) => ($(id).disabled = false));
+  ["play", "prev", "next", "copy", "export", "ask-anything"].forEach((id) => ($(id).disabled = false));
   $("exported").textContent = "";
   location.hash = ep.id;
   $("now").textContent = "ready — press play";
@@ -270,7 +355,7 @@ document.addEventListener("mouseup", (event) => {
   } else if (turnEl) {
     const turn = state.episode.turns[Number(turnEl.dataset.i)];
     askContext = { ref: turn.ref || null, selection: "", quote: text };
-    $("askref").textContent = `about what the ${turn.speaker} said · ${snippet}…`;
+    $("askref").textContent = `about what the ${who(turn.speaker)} said · ${snippet}…`;
   } else {
     return hideAsk();
   }
@@ -292,7 +377,7 @@ function askAnything() {
   const turn = state.episode.turns[state.index];
   askContext = { ref: turn?.ref || null, selection: "", quote: "" };
   $("askref").textContent = turn
-    ? `about the episode · after the ${turn.speaker}'s line`
+    ? `about the episode · after the ${who(turn.speaker)}'s line`
     : "about the episode";
   const anchor = $("ask-anything").getBoundingClientRect();
   openAsk(anchor.left, anchor.top - 220);
@@ -314,6 +399,7 @@ async function sendQuestion() {
     const res = await api(`/api/episodes/${state.episode.id}/ask`, { method: "POST", body });
     const at = state.index >= 0 ? state.index + 1 : state.episode.turns.length;
     state.episode.turns.splice(at, 0, ...res.turns);
+    if (res.lint) state.episode.lint = res.lint;
     renderShow(state.episode);
     $("askinput").value = "";
     hideAsk();
@@ -322,6 +408,41 @@ async function sendQuestion() {
     $("askstatus").textContent = err.message;
   } finally {
     $("asksend").disabled = false;
+  }
+}
+
+/* ---------- copy --------------------------------------------------------- */
+// navigator.clipboard needs a secure context, and the studio is usually opened
+// from the Windows host - over the WSL IP, which is not one. Hence the fallback.
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(text); return; } catch (err) { /* fall through */ }
+  }
+  const area = document.createElement("textarea");
+  area.value = text;
+  Object.assign(area.style, { position: "fixed", top: "0", opacity: "0" });
+  document.body.appendChild(area);
+  area.select();
+  const copied = document.execCommand("copy");
+  area.remove();
+  if (!copied) throw new Error("the browser refused the clipboard");
+}
+
+async function copyTranscript() {
+  $("copy").disabled = true;
+  $("exported").textContent = "copying…";
+  try {
+    // One renderer server-side, so the clipboard carries the same label and
+    // claim levels as the transcript on screen.
+    const res = await fetch(`/api/episodes/${state.episode.id}/transcript.md`);
+    if (!res.ok) throw new Error(res.statusText);
+    const md = await res.text();
+    await copyText(md);
+    $("exported").textContent = `transcript copied · ${md.length.toLocaleString()} characters of markdown`;
+  } catch (err) {
+    $("exported").textContent = `copy failed: ${err.message}`;
+  } finally {
+    $("copy").disabled = false;
   }
 }
 
@@ -354,6 +475,7 @@ $("go").onclick = record;
 $("url").onkeydown = (e) => { if (e.key === "Enter") record(); };
 $("play").onclick = toggle;
 $("export").onclick = exportVideo;
+$("copy").onclick = copyTranscript;
 $("ask-anything").onclick = askAnything;
 $("prev").onclick = () => playAt(Math.max(0, state.index - 1));
 $("next").onclick = () => playAt(state.index + 1);

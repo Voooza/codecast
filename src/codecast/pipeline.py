@@ -55,7 +55,13 @@ def record(url: str, *, extra_context: str = "") -> session.Episode:
         url,
         mr,
         files,
-        script.build(mr, files, extra_context=extra_context, brief=research.render(brief)),
+        script.build(
+            mr,
+            files,
+            extra_context=extra_context,
+            brief=research.render(brief),
+            cite_paths=research.evidence_paths(brief),
+        ),
         brief=brief,
         trace=trace,
     )

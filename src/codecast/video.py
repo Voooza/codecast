@@ -33,6 +33,12 @@ GUEST = (255, 184, 108)
 ADD_BG, ADD_FG = (28, 51, 38), (126, 231, 135)
 DEL_BG, DEL_FG = (58, 29, 34), (255, 148, 146)
 
+# The schema's roles; what the frame and the subtitles call them. The guest is
+# a reviewer, never the author, and an exported mp4 travels further than the
+# studio does - so the frame says so too.
+SPEAKERS = {"host": "HOST", "guest": "REVIEWER"}
+DISCLAIMER = "codecast · synthetic review, not the author"
+
 FONTS = Path("/usr/share/fonts/truetype/dejavu")
 CAPTION_CHARS = 108  # per caption chunk; ~2 lines of the caption box
 CODE_ROWS = 18  # what fits between the panel's header and its floor
@@ -210,7 +216,12 @@ def _draw_frame(episode: Episode, chunk: Chunk, total: float, path: Path) -> Non
     speaker = chunk.turn["speaker"]
     colour = GUEST if speaker == "guest" else HOST
     draw.rounded_rectangle([48, 736, W - 48, 992], radius=12, fill=PANEL, outline=LINE)
-    draw.text((72, 762), speaker.upper(), font=who_font, fill=colour)
+    label = SPEAKERS.get(speaker, speaker.upper())
+    if chunk.turn.get("claim") == "verified" and chunk.turn.get("cite"):
+        label += "  ✓ " + _path_label(str(chunk.turn["cite"][0]), 46)
+    elif chunk.turn.get("claim") == "asserted":
+        label += "  · unverified"
+    draw.text((72, 762), label, font=who_font, fill=colour)
     if chunk.chapter:
         chapter = chunk.chapter[:70]
         draw.text((W - 72 - draw.textlength(chapter, font=meta_font), 762), chapter, font=meta_font, fill=MUTED)
@@ -225,7 +236,7 @@ def _draw_frame(episode: Episode, chunk: Chunk, total: float, path: Path) -> Non
     draw.rectangle([48, 1030, 48 + int((W - 96) * played), 1036], fill=colour)
     clock = f"{int(chunk.start // 60):d}:{int(chunk.start % 60):02d} / {int(total // 60):d}:{int(total % 60):02d}"
     draw.text((48, 1046), clock, font=_font("DejaVuSansMono.ttf", 20), fill=MUTED)
-    draw.text((W - 48 - draw.textlength("codecast", font=meta_font), 1044), "codecast",
+    draw.text((W - 48 - draw.textlength(DISCLAIMER, font=meta_font), 1044), DISCLAIMER,
               font=meta_font, fill=MUTED)
 
     image.save(path)
@@ -244,7 +255,7 @@ def _write_srt(chunks: Iterable[Chunk], path: Path) -> None:
     for i, chunk in enumerate(chunks, start=1):
         blocks.append(
             f"{i}\n{_srt_time(chunk.start)} --> {_srt_time(chunk.start + chunk.duration)}\n"
-            f"{chunk.turn['speaker'].upper()}: {chunk.text}\n"
+            f"{SPEAKERS.get(chunk.turn['speaker'], chunk.turn['speaker'].upper())}: {chunk.text}\n"
         )
     path.write_text("\n".join(blocks))
 

@@ -7,12 +7,12 @@ import subprocess
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import diff as diffmod
-from . import forge, pipeline, providers, repo, research, script, session, video
+from . import forge, pipeline, providers, repo, research, script, session, transcript, video
 from .config import PROJECT_ROOT, ConfigError, cast, clear_cast, set_cast, settings
 
 WEB_DIR = PROJECT_ROOT / "web"
@@ -207,7 +207,7 @@ def ask(episode_id: str, body: Question) -> dict[str, Any]:
         needle = body.quote.strip()[:80]
         quoted = next((t for t in episode.turns if needle and needle in t["text"]), None)
         quoted_speaker = (quoted or {}).get("speaker", "")
-    turns = script.answer(
+    turns, issues = script.answer(
         episode.merge_request(),
         files,
         question=body.question.strip(),
@@ -217,10 +217,20 @@ def ask(episode_id: str, body: Question) -> dict[str, Any]:
         quote=body.quote,
         quoted_speaker=quoted_speaker,
         brief=research.render(brief),
+        cite_paths=research.evidence_paths(brief),
     )
     inserted = episode.insert_after(body.after_turn, turns)
+    episode.lint += issues
     session.save(episode)
-    return {"turns": inserted}
+    return {"turns": inserted, "lint": episode.lint}
+
+
+@app.get("/api/episodes/{episode_id}/transcript.md", response_class=PlainTextResponse)
+def transcript_md(episode_id: str) -> PlainTextResponse:
+    """The episode as markdown, for the studio's copy button and for curl."""
+    return PlainTextResponse(
+        transcript.markdown(_load(episode_id)), media_type="text/markdown; charset=utf-8"
+    )
 
 
 @app.post("/api/episodes/{episode_id}/export")
